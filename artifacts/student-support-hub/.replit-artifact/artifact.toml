@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Student Support Hub"
+description = "A calm, role-based consultation and counseling workspace for tertiary institutions. Students can request support, counselors can manage sessions and private records, and administrators can oversee service activity."
+version = "1.0.0"
+id = "artifacts/student-support-hub"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 20316
+
+[services.development]
+run = "pnpm --filter @workspace/student-support-hub run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/student-support-hub", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/student-support-hub/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "20316"
+BASE_PATH = "/"
