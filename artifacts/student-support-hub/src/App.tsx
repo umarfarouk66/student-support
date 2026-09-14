@@ -1,5 +1,14 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
-import { Link, Route, Switch, useLocation, useParams } from 'wouter';
+import { Link, Redirect, Route, Switch, useLocation } from 'wouter';
+import {
+  ClerkProvider,
+  SignIn,
+  SignUp,
+  useClerk,
+  useUser,
+} from '@clerk/react';
+import { publishableKeyFromHost } from '@clerk/react/internal';
+import { shadcn } from '@clerk/themes';
 import {
   AlertCircle,
   ArrowUpRight,
@@ -78,6 +87,84 @@ type SessionNote = {
 
 const queryClient = new QueryClient();
 const studentName = 'Amara Okafor';
+const clerkPubKey = publishableKeyFromHost(
+  window.location.hostname,
+  import.meta.env.VITE_CLERK_PUBLISHABLE_KEY,
+);
+const clerkProxyUrl = import.meta.env.VITE_CLERK_PROXY_URL;
+const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
+
+type AuthenticatedUser = {
+  fullName?: string | null;
+  firstName?: string | null;
+  primaryEmailAddress?: { emailAddress: string } | null;
+  publicMetadata?: unknown;
+};
+
+function getUserRole(user: AuthenticatedUser | null | undefined): Role {
+  const metadata = (user?.publicMetadata ?? {}) as { role?: unknown };
+  return metadata.role === 'counselor' || metadata.role === 'administrator'
+    ? metadata.role
+    : 'student';
+}
+
+function getUserName(user: AuthenticatedUser | null | undefined) {
+  return (
+    user?.fullName ||
+    user?.firstName ||
+    user?.primaryEmailAddress?.emailAddress ||
+    'Support account'
+  );
+}
+
+const clerkAppearance = {
+  theme: shadcn,
+  cssLayerName: 'clerk',
+  options: {
+    logoPlacement: 'inside' as const,
+    logoLinkUrl: basePath || '/',
+    logoImageUrl: `${window.location.origin}${basePath}/logo.svg`,
+  },
+  variables: {
+    colorPrimary: '#f18a73',
+    colorForeground: '#173d43',
+    colorMutedForeground: '#6d7e7d',
+    colorDanger: '#b85454',
+    colorBackground: '#fffdf9',
+    colorInput: '#fffdf9',
+    colorInputForeground: '#173d43',
+    colorNeutral: '#d9ded7',
+    fontFamily: 'DM Sans, sans-serif',
+    borderRadius: '0.75rem',
+  },
+  elements: {
+    rootBox: 'w-full flex justify-center',
+    cardBox: 'bg-[#fffdf9] rounded-2xl w-[440px] max-w-full overflow-hidden shadow-xl',
+    card: '!shadow-none !border-0 !bg-transparent !rounded-none',
+    footer: '!shadow-none !border-0 !bg-transparent !rounded-none',
+    headerTitle: 'text-[#173d43] font-semibold',
+    headerSubtitle: 'text-[#6d7e7d]',
+    socialButtonsBlockButtonText: 'text-[#173d43]',
+    formFieldLabel: 'text-[#173d43]',
+    footerActionLink: 'text-[#d56f5e] font-semibold',
+    footerActionText: 'text-[#6d7e7d]',
+    dividerText: 'text-[#6d7e7d]',
+    identityPreviewEditButton: 'text-[#d56f5e]',
+    formFieldSuccessText: 'text-[#3d8a72]',
+    alertText: 'text-[#b85454]',
+    logoBox: 'mb-5',
+    logoImage: 'max-h-12',
+    socialButtonsBlockButton: 'border-[#d9ded7] bg-[#fffdf9] hover:bg-[#f4f1e9]',
+    formButtonPrimary: 'bg-[#f18a73] text-[#173d43] hover:bg-[#e77b65]',
+    formFieldInput: 'border-[#d9ded7] bg-[#fffdf9] text-[#173d43]',
+    footerAction: 'border-t border-[#e8ebe5]',
+    dividerLine: 'bg-[#d9ded7]',
+    alert: 'border-[#f0c8c0] bg-[#fff3ef]',
+    otpCodeFieldInput: 'border-[#d9ded7] bg-[#fffdf9]',
+    formFieldRow: 'mb-4',
+    main: 'gap-5',
+  },
+};
 
 const seededCounselors: Counselor[] = [
   { id: 'c-1', name: 'Dr. Naomi Mensah', initials: 'NM', specialty: 'Anxiety & academic pressure', bio: 'A warm, practical space for making sense of heavy semesters, transitions, and the expectations around you.', next: 'Today · 15:30', days: 'Mon, Wed, Fri', color: 'coral', active: true },
@@ -131,10 +218,19 @@ function formatDate(date: string) {
   return new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(`${date}T12:00:00`));
 }
 
-function Shell({ children, role, setRole }: { children: ReactNode; role: Role; setRole: (role: Role) => void }) {
+function Shell({
+  children,
+  role,
+  userName,
+  onSignOut,
+}: {
+  children: ReactNode;
+  role: Role;
+  userName: string;
+  onSignOut: () => void;
+}) {
   const [location] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [showRoles, setShowRoles] = useState(false);
   const visibleNav = navItems.filter((item) => !item.roles || item.roles.includes(role));
 
   return (
@@ -146,20 +242,13 @@ function Shell({ children, role, setRole }: { children: ReactNode; role: Role; s
           <button className="icon-button side-close" onClick={() => setMobileOpen(false)} aria-label="Close navigation" data-testid="button-close-navigation"><X size={18} /></button>
         </div>
         <div className="rail-context">
-          <div className="context-kicker">Your workspace</div>
-          <button className="role-select" onClick={() => setShowRoles(!showRoles)} data-testid="button-role-switcher">
+          <div className="context-kicker">Signed in as</div>
+          <div className="role-select role-readonly" aria-label={`Signed in as ${role}`}>
             <span className={`role-dot ${role}`} />
             <span>{role === 'administrator' ? 'Administrator' : role === 'counselor' ? 'Counselor view' : 'Student view'}</span>
-            <ChevronDown size={15} />
-          </button>
-          {showRoles && <div className="role-menu">
-            {(['student', 'counselor', 'administrator'] as Role[]).map((option) => (
-              <button key={option} onClick={() => { setRole(option); setShowRoles(false); }} data-testid={`button-role-${option}`}>
-                <span className={`role-dot ${option}`} /><span>{option === 'administrator' ? 'Administrator' : option === 'counselor' ? 'Counselor' : 'Student'}</span>
-                {role === option && <Check size={14} />}
-              </button>
-            ))}
-          </div>}
+            <ShieldCheck size={15} />
+          </div>
+          <div className="auth-assurance"><LockKeyhole size={12} /> Managed account access</div>
         </div>
         <nav className="rail-nav" aria-label="Main navigation">
           <div className="rail-label">Workspace</div>
@@ -171,11 +260,11 @@ function Shell({ children, role, setRole }: { children: ReactNode; role: Role; s
         </nav>
         <div className="rail-bottom">
           <div className="privacy-mini"><LockKeyhole size={15} /><span>Private by design</span></div>
-          <div className="user-mini">
-            <div className="avatar avatar-small">{role === 'student' ? 'AO' : role === 'counselor' ? 'NM' : 'SA'}</div>
-            <div className="user-mini-copy"><strong>{role === 'student' ? studentName : role === 'counselor' ? 'Dr. Naomi Mensah' : 'Sam Adeyemi'}</strong><span>{role}</span></div>
-            <MoreHorizontal size={17} />
-          </div>
+          <button className="user-mini user-logout" onClick={onSignOut} data-testid="button-sign-out">
+            <div className="avatar avatar-small">{initials(userName)}</div>
+            <div className="user-mini-copy"><strong>{userName}</strong><span>{role}</span></div>
+            <span className="logout-label">Sign out</span>
+          </button>
         </div>
       </aside>
       {mobileOpen && <button className="mobile-scrim" onClick={() => setMobileOpen(false)} aria-label="Close menu" data-testid="button-close-menu" />}
@@ -332,7 +421,7 @@ function NotFound() {
   return <div className="not-found"><HeartHandshake size={30} /><h1>That page is taking a quiet moment.</h1><p>There is nothing here yet.</p><Link href="/" className="button button-coral" data-testid="link-back-home">Back to overview</Link></div>;
 }
 
-function RouterContent({ role, setRole }: { role: Role; setRole: (role: Role) => void }) {
+function RouterContent({ role }: { role: Role }) {
   const [appointments, setAppointments] = useStoredState<Appointment[]>('hush-appointments', seededAppointments);
   const [notes, setNotes] = useStoredState<SessionNote[]>('hush-notes', seededNotes);
   const [counselors, setCounselors] = useStoredState<Counselor[]>('hush-counselors', seededCounselors);
@@ -349,9 +438,96 @@ function RouterContent({ role, setRole }: { role: Role; setRole: (role: Role) =>
   </Switch>;
 }
 
+function LoadingScreen() {
+  return <div className="auth-page"><div className="auth-loading"><div className="brand-mark"><HeartHandshake size={20} /></div><p>Opening your private support space…</p></div></div>;
+}
+
+function LandingPage() {
+  return <div className="landing-page">
+    <div className="landing-nav">
+      <div className="brand-lockup landing-brand"><div className="brand-mark"><HeartHandshake size={19} /></div><div><div className="brand-name">hush<span>.</span></div><div className="brand-subtitle">student support</div></div></div>
+      <div className="landing-actions"><Link href="/sign-in" className="text-button" data-testid="link-sign-in">Sign in</Link><Link href="/sign-up" className="button button-coral" data-testid="link-sign-up">Create account <ArrowUpRight size={15} /></Link></div>
+    </div>
+    <main className="landing-main">
+      <div className="landing-copy">
+        <div className="eyebrow">A quieter way to ask for help</div>
+        <h1>Your support space is ready when you are<span className="coral-dot">.</span></h1>
+        <p>Book a conversation, keep track of your care, and stay connected to the people supporting your student journey.</p>
+        <div className="landing-cta"><Link href="/sign-up" className="button button-coral" data-testid="button-landing-create-account">Create your account <ArrowUpRight size={16} /></Link><Link href="/sign-in" className="text-button" data-testid="button-landing-sign-in">Already have an account? Sign in <ChevronRight size={15} /></Link></div>
+      </div>
+      <div className="landing-card">
+        <div className="landing-card-art"><div className="art-ring ring-one" /><div className="art-ring ring-two" /><HeartHandshake size={38} /></div>
+        <div className="eyebrow">Private by design</div>
+        <h2>Support should feel safe before it feels useful.</h2>
+        <p>Your account controls what you can see. Counselors manage assigned care, and administrators see service patterns without private note content.</p>
+        <div className="landing-trust"><div><ShieldCheck size={15} /> Secure account access</div><div><LockKeyhole size={15} /> Role permissions included</div></div>
+      </div>
+    </main>
+  </div>;
+}
+
+function SignInPage() {
+  return <div className="auth-page"><div className="auth-back"><Link href="/" className="text-button"><ChevronRight size={15} className="rotate-180" /> Back to hush.</Link></div><SignIn routing="path" path={`${basePath}/sign-in`} signUpUrl={`${basePath}/sign-up`} /></div>;
+}
+
+function SignUpPage() {
+  return <div className="auth-page"><div className="auth-back"><Link href="/" className="text-button"><ChevronRight size={15} className="rotate-180" /> Back to hush.</Link></div><SignUp routing="path" path={`${basePath}/sign-up`} signInUrl={`${basePath}/sign-in`} /></div>;
+}
+
+function ProtectedPortal() {
+  const { user, isLoaded } = useUser();
+  const { signOut } = useClerk();
+  if (!isLoaded) return <LoadingScreen />;
+  if (!user) return <Redirect to="/" />;
+  const role = getUserRole(user);
+  const userName = getUserName(user);
+  return <ErrorBoundary resetKey={role}><Shell role={role} userName={userName} onSignOut={() => signOut({ redirectUrl: basePath || '/' })}><RouterContent role={role} /></Shell></ErrorBoundary>;
+}
+
+function HomeRoute() {
+  const { user, isLoaded } = useUser();
+  if (!isLoaded) return <LoadingScreen />;
+  return user ? <ProtectedPortal /> : <LandingPage />;
+}
+
+function ClerkRoutes() {
+  return <Switch>
+    <Route path="/sign-in/*?" component={SignInPage} />
+    <Route path="/sign-up/*?" component={SignUpPage} />
+    <Route path="/" component={HomeRoute} />
+    <Route component={ProtectedPortal} />
+  </Switch>;
+}
+
+function stripBase(path: string) {
+  return basePath && path.startsWith(basePath)
+    ? path.slice(basePath.length) || '/'
+    : path;
+}
+
+function ClerkApp() {
+  const [, setLocation] = useLocation();
+  return <ClerkProvider
+    publishableKey={clerkPubKey}
+    proxyUrl={clerkProxyUrl}
+    appearance={clerkAppearance}
+    signInUrl={`${basePath}/sign-in`}
+    signUpUrl={`${basePath}/sign-up`}
+    localization={{ signIn: { start: { title: 'Welcome back', subtitle: 'Sign in to access your support space' } }, signUp: { start: { title: 'Create your account', subtitle: 'A private place to begin' } } }}
+    routerPush={(to) => setLocation(stripBase(to))}
+    routerReplace={(to) => setLocation(stripBase(to), { replace: true })}
+  >
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <ClerkRoutes />
+        <Toaster />
+      </TooltipProvider>
+    </QueryClientProvider>
+  </ClerkProvider>;
+}
+
 function App() {
-  const [role, setRole] = useStoredState<Role>('hush-active-role', 'student');
-  return <QueryClientProvider client={queryClient}><TooltipProvider><WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}><ErrorBoundary resetKey={role}><Shell role={role} setRole={setRole}><RouterContent role={role} setRole={setRole} /></Shell></ErrorBoundary></WouterRouter><Toaster /></TooltipProvider></QueryClientProvider>;
+  return <WouterRouter base={basePath}><ClerkApp /></WouterRouter>;
 }
 
 export default App;
