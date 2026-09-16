@@ -1,0 +1,1 @@
+- [Support Hub roles](support-hub-auth.md) — elevated access is assigned through Clerk public metadata; unassigned accounts default to Student.
